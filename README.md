@@ -126,3 +126,7 @@ This should produce `dist\Lemur Tracker.exe`.
 | `lemur_tracker/rewards.py` | Reward chimes (generated in code, no audio files), cheers, playback |
 | `lemur_tracker/widgets.py` | Tail progress bar, lemur drawing, celebration cards, scrolling list |
 | `lemur_tracker/theme.py` | The look (dark academia and goth in purple, Palatino headings), styles, lemur facts |
+
+## License
+
+MIT. See [LICENSE](LICENSE).
