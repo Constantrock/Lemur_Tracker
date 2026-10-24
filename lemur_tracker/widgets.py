@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 import random
+import time
 import tkinter as tk
 import tkinter.font as tkfont
 from collections.abc import Callable
@@ -57,24 +58,43 @@ class TailProgress(tk.Canvas):
 
     Painted black and white rings fill in from the left over grey plastic,
     and the tail gets its black tip when the work is finished.
+
+    With `sway` pixels of headroom above and below, `wag()` shakes the tail:
+    the base stays put and the swing widens towards the tip.
     """
 
+    TICK_MS = 16  # about 60 frames a second, so the wag looks fluid
+    GROW_SECONDS = 0.66
+    WAG_CYCLES = 20
+    WAG_SECONDS = 10.0
+    WAG_WAVES = 1.25  # how many ripples run down the tail at once
+    WAG_SETTLE = 0.2  # the last fifth of the wag eases back to still
+
     def __init__(
-        self, master: tk.Misc, height: int = 16, background: str = PANEL, width: int = 60, **kw
+        self, master: tk.Misc, height: int = 16, background: str = PANEL, width: int = 60, sway: int = 0, **kw
     ) -> None:
         # Request a small width and let pack/grid stretch it, so labels beside it keep their room.
         super().__init__(
-            master, width=width, height=height, background=background, highlightthickness=0, bd=0, **kw
+            master, width=width, height=height + 2 * sway, background=background, highlightthickness=0, bd=0, **kw
         )
         self._height = height
+        self._sway = sway
         self._value = 0.0
         self._shown = 0.0  # what's drawn; trails _value while growing
+        # Both animations run off the clock, so a slow frame doesn't stretch them out.
+        self._growth: tuple[float, float, float, Callable[[float], None] | None] | None = None
+        self._wag_started: float | None = None
+        self._wag_t: float | None = None  # how far through the wag (0.0 to 1.0), or None when still
         self._animation: str | None = None
         self.bind("<Configure>", lambda _e: self.redraw())
+        self.bind("<Destroy>", lambda _e: self._stop_animation())
 
     def set(self, value: float) -> None:
-        self._stop_animation()
+        """Jump straight to `value`. A wag in progress carries on."""
+        self._growth = None
         self._value = self._shown = min(1.0, max(0.0, value))
+        if self._wag_t is None:
+            self._stop_animation()
         self.redraw()
 
     def animate_from(self, start: float, on_frame: Callable[[float], None] | None = None) -> None:
@@ -82,38 +102,95 @@ class TailProgress(tk.Canvas):
 
         `on_frame` is called each frame with how far through the growth it is (0.0 to 1.0).
         """
-        self._stop_animation()
-        start, target, frames = min(1.0, max(0.0, start)), self._value, 20
+        self._growth = (min(1.0, max(0.0, start)), self._value, time.monotonic(), on_frame)
+        self._run()
 
-        def frame(i: int) -> None:
-            eased = 1 - (1 - i / frames) ** 3
+    def wag(self) -> None:
+        """Shake the tail like a happy lemur: WAG_CYCLES swings over WAG_SECONDS."""
+        if self._sway:
+            self._wag_started, self._wag_t = time.monotonic(), 0.0
+            self._run()
+
+    def stop_wag(self) -> None:
+        if self._wag_t is not None:
+            self._wag_started = self._wag_t = None
+            if self._growth is None:
+                self._stop_animation()
+            self.redraw()
+
+    def _run(self) -> None:
+        self._stop_animation()
+        self._tick()
+
+    def _tick(self) -> None:
+        now = time.monotonic()
+        sparkle = False
+        if self._growth is not None:
+            start, target, began, on_frame = self._growth
+            done = min(1.0, (now - began) / self.GROW_SECONDS)
+            eased = 1 - (1 - done) ** 3
             self._shown = start + (target - start) * eased
-            self.redraw(sparkle=i < frames)
+            sparkle = done < 1
             if on_frame:
                 on_frame(eased)
-            self._animation = self.after(FRAME_MS, frame, i + 1) if i < frames else None
-
-        frame(0)
+            if done >= 1:
+                self._growth = None
+        if self._wag_started is not None:
+            self._wag_t = (now - self._wag_started) / self.WAG_SECONDS
+            if self._wag_t >= 1:
+                self._wag_started = self._wag_t = None
+        self.redraw(sparkle=sparkle)
+        busy = self._growth is not None or self._wag_t is not None
+        self._animation = self.after(self.TICK_MS, self._tick) if busy else None
 
     def _stop_animation(self) -> None:
         if self._animation is not None:
             self.after_cancel(self._animation)
             self._animation = None
 
+    def _bend(self, u: float) -> float:
+        """How far the tail is pushed up or down at `u` along it (0 at the base, 1 at the tip)."""
+        t = self._wag_t
+        if t is None:
+            return 0.0
+        settle = min(1.0, (1 - t) / self.WAG_SETTLE)
+        u = min(1.0, max(0.0, u))
+        # A wave ripples from the base to the tip, swinging wider the further along it gets.
+        phase = 2 * math.pi * (self.WAG_CYCLES * t - self.WAG_WAVES * u)
+        return self._sway * settle * u**1.2 * math.sin(phase)
+
     def redraw(self, sparkle: bool = False) -> None:
         self.delete("all")
         width = self.winfo_width()
         if width < self._height * 3:
             return
-        top, bottom = 1, self._height - 1
+        top, bottom = 1 + self._sway, self._height - 1 + self._sway
         left, right = 1, width - 2
         d = bottom - top
         r = d / 2
         start, end = left + r, right - r
+        bent = self._wag_t is not None
+
+        def dy(x: float) -> float:
+            return self._bend((x - start) / (end - start))
+
+        def edge(x1: float, x2: float, y: float) -> list[float]:
+            """Points along the tail from x1 to x2 at height y, following the bend."""
+            steps = max(1, math.ceil(abs(x2 - x1) / 2))
+            xs = [x1 + (x2 - x1) * k / steps for k in range(steps + 1)]
+            return [c for x in xs for c in (x, y + dy(x))]
+
+        def band(x1: float, x2: float, fill: str) -> None:
+            if not bent:
+                self.create_rectangle(x1, top, x2, bottom, fill=fill, outline="")
+                return
+            self.create_polygon(edge(x1, x2, top) + edge(x2, x1, bottom), fill=fill, outline="")
+
+        tip = dy(end)
 
         self.create_oval(left, top, left + d, bottom, fill=GREY_PLASTIC, outline="")
-        self.create_oval(right - d, top, right, bottom, fill=GREY_PLASTIC, outline="")
-        self.create_rectangle(start, top, end, bottom, fill=GREY_PLASTIC, outline="")
+        self.create_oval(right - d, top + tip, right, bottom + tip, fill=GREY_PLASTIC, outline="")
+        band(start, end, GREY_PLASTIC)
 
         fill_to = start + (end - start) * self._shown
         if self._shown > 0:
@@ -122,24 +199,24 @@ class TailProgress(tk.Canvas):
             x, dark = start, False
             while x < fill_to:
                 x2 = min(x + ring, fill_to)
-                self.create_rectangle(x, top, x2, bottom, fill=RING_BLACK if dark else RING_WHITE, outline="")
+                band(x, x2, RING_BLACK if dark else RING_WHITE)
                 x, dark = x2, not dark
             if self._shown >= 1:
-                self.create_rectangle(right - d, top, end, bottom, fill=RING_BLACK, outline="")
-                self.create_oval(right - d, top, right, bottom, fill=RING_BLACK, outline="")
+                band(right - d, end, RING_BLACK)
+                self.create_oval(right - d, top + tip, right, bottom + tip, fill=RING_BLACK, outline="")
 
         # A gilt outline frames the tail.
         self.create_arc(left, top, left + d, bottom, start=90, extent=180, style=tk.ARC, outline=GILT)
-        self.create_arc(right - d, top, right, bottom, start=270, extent=180, style=tk.ARC, outline=GILT)
-        self.create_line(start, top, end, top, fill=GILT)
-        self.create_line(start, bottom, end, bottom, fill=GILT)
+        self.create_arc(right - d, top + tip, right, bottom + tip, start=270, extent=180, style=tk.ARC, outline=GILT)
+        self.create_line(edge(start, end, top), fill=GILT)
+        self.create_line(edge(start, end, bottom), fill=GILT)
 
         if sparkle:
             for _ in range(3):
                 draw_star(
                     self,
                     fill_to + random.uniform(-d, d * 0.4),
-                    (top + bottom) / 2 + random.uniform(-r, r),
+                    (top + bottom) / 2 + dy(fill_to) + random.uniform(-r, r),
                     random.uniform(r * 0.4, r * 0.8),
                     random.choice((GILT, LAVENDER, RING_WHITE)),
                 )

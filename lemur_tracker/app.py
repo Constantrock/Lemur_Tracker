@@ -123,6 +123,7 @@ class LemurTrackerApp:
         self.sound_var = tk.BooleanVar(value=self.sound.enabled)
         self._celebration: Celebration | None = None
         self._steps_this_session = 0
+        self._wagging: str | None = None  # id of the commission whose tail is wagging
 
         root.title("Lemur Tracker")
         root.geometry("1280x800")
@@ -174,6 +175,7 @@ class LemurTrackerApp:
         self._save()
         self.refresh()
         if project.is_complete and not was_complete:
+            self._wag_tail(project)
             self.sound.play_commission_done()
             self._celebrate(
                 "commission",
@@ -304,8 +306,8 @@ class LemurTrackerApp:
         ttk.Button(top, text="Edit details", command=self.edit_project).pack(side="right", padx=(0, 8))
 
         progress = ttk.Frame(frame, style="Panel.TFrame")
-        progress.grid(row=1, column=0, sticky="ew", pady=(14, 4))
-        self.d_tail = TailProgress(progress, height=24, background=PANEL)
+        progress.grid(row=1, column=0, sticky="ew")  # the tail's sway gives it room above and below
+        self.d_tail = TailProgress(progress, height=24, background=PANEL, sway=16)
         self.d_tail.pack(side="left", fill="x", expand=True)
         self.d_percent = ttk.Label(progress, style="Title.TLabel", width=5, anchor="e")
         self.d_percent.pack(side="right", padx=(12, 0))
@@ -547,6 +549,9 @@ class LemurTrackerApp:
 
     def _refresh_detail(self) -> None:
         project = self.selected_project
+        if project is None or project.id != self._wagging:
+            self._wagging = None
+            self.d_tail.stop_wag()
         if project is None:
             self._show_empty()
             return
@@ -708,6 +713,7 @@ class LemurTrackerApp:
         with self._changing(project):
             project.delivered = not project.delivered
         if project.delivered:
+            self._wag_tail(project)
             hidden = "" if self.show_delivered_var.get() else " It's tucked out of the list; tick “Show delivered” to see it."
             self._say(f"“{project.name}” delivered. Nice work!{hidden}")
 
@@ -819,6 +825,12 @@ class LemurTrackerApp:
             completed = {before[u.id] for u in moved}
             headline = headline_for(completed.pop()) if len(completed) == 1 else "Steps done!"
             self._celebrate("step", headline, f"{who} · {models}", cheer(), tally)
+
+    def _wag_tail(self, project: Project) -> None:
+        """Shake the big tail for a commission that's just finished or shipped, if it's on show."""
+        if self.selected_project is project:
+            self._wagging = project.id
+            self.d_tail.wag()
 
     def _celebrate(self, level: str, headline: str, message: str, footnote: str, tally: str = "") -> None:
         if self._celebration is not None:

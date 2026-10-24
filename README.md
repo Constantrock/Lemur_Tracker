@@ -73,9 +73,10 @@ Every **Next step** earns an instant reward, so small wins feel like wins:
   moved into flash
 
 Finishing a unit gets a bigger flourish. Finishing a whole commission gets a
-fanfare and a full-size party. Rewards never block anything: they clear
-themselves after a few seconds, or you can click one away. **Step back** stays
-quiet.
+fanfare and a full-size party, and the big progress tail wags for ten
+seconds. Marking a commission delivered wags it too. Rewards never block
+anything: they clear themselves after a few seconds, or you can click one
+away. **Step back** stays quiet.
 
 Untick **Sound effects** in the header to mute the chimes. The setting is
 remembered.

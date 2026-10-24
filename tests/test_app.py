@@ -111,6 +111,7 @@ class AppTests(unittest.TestCase):
         run_for(self.root, 0.9)
         self.assertEqual(app.d_percent.cget("text"), "100%")  # ...and lands on the real figure
         self.assertEqual(app.d_tail._shown, 1.0)
+        self.assertIsNotNone(app.d_tail._wag_t)  # the finished tail wags
         self.assertIn("disabled", app.next_button.state())
         app.sound.play_commission_done.assert_called_once()
         app.sound.play_unit_done.assert_not_called()  # the bigger party replaces it
